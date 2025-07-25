@@ -1,6 +1,6 @@
 import math
 from string import ascii_lowercase, ascii_uppercase
-from typing import Callable, List, Literal, Optional, Tuple, Union
+from typing import Callable, List, Literal, Optional, Tuple, Union, Dict, Any
 
 import numpy as np
 import torch
@@ -13,27 +13,27 @@ from pytorch_optimizer.optimizer.psgd_utils import norm_lower_bound
 MEMORY_SAVE_MODE_TYPE = Literal['one_diag', 'smart_one_diag', 'all_diag']
 
 
-def precondition_update_prob_schedule(
-    max_prob: float = 1.0, min_prob: float = 0.03, decay: float = 0.001, flat_start: int = 500
-) -> Callable[[int], torch.Tensor]:
-    """Anneal pre-conditioner update probability during beginning of training.
-
-    PSGD benefits from more pre-conditioner updates at the beginning of training, but once the pre-conditioner is
-    learned the update probability can drop low.
-
-    This schedule is an exponential anneal with a flat start. Default settings keep update probability at 1.0 for 200
-    steps then exponentially anneal down to `min_prob` by 4000 steps. Default settings work very well for most models
-    and training regimes.
-    """
-
-    def _schedule(n: int) -> torch.Tensor:
+class PreconditionUpdateProbSchedule:
+    """Picklable version of the precondition update probability schedule."""
+    
+    def __init__(self, max_prob: float = 1.0, min_prob: float = 0.03, decay: float = 0.001, flat_start: int = 500):
+        self.max_prob = max_prob
+        self.min_prob = min_prob
+        self.decay = decay
+        self.flat_start = flat_start
+    
+    def __call__(self, n: int) -> torch.Tensor:
         """Exponential anneal with flat start."""
         n = torch.tensor(n, dtype=torch.float32)
-        prob = max_prob * torch.exp(-decay * (n - flat_start))
-        prob.clamp_(min=min_prob, max=max_prob)
+        prob = self.max_prob * torch.exp(-self.decay * (n - self.flat_start))
+        prob.clamp_(min=self.min_prob, max=self.max_prob)
         return prob
 
-    return _schedule
+def precondition_update_prob_schedule(
+    max_prob: float = 1.0, min_prob: float = 0.03, decay: float = 0.001, flat_start: int = 500
+) -> PreconditionUpdateProbSchedule:
+    """Create a picklable pre-conditioner update probability schedule."""
+    return PreconditionUpdateProbSchedule(max_prob, min_prob, decay, flat_start)
 
 
 class Kron(BaseOptimizer):
@@ -66,7 +66,7 @@ class Kron(BaseOptimizer):
         momentum: float = 0.9,
         weight_decay: float = 0.0,
         weight_decouple: bool = True,
-        pre_conditioner_update_probability: Optional[Tuple[Callable, float]] = None,
+        pre_conditioner_update_probability: Optional[Union[Callable, float]] = None,
         max_size_triangular: int = 8192,
         min_ndim_triangular: int = 2,
         memory_save_mode: Optional[MEMORY_SAVE_MODE_TYPE] = None,
@@ -113,6 +113,35 @@ class Kron(BaseOptimizer):
 
     def init_group(self, group: GROUP, **kwargs) -> None:
         pass
+
+    def state_dict(self) -> Dict[str, Any]:
+        """Return the state of the optimizer as a dict.
+        
+        Includes the optimizer's internal counters that need to be preserved.
+        """
+        state_dict = super().state_dict()
+        # Add our custom counters to the state dict
+        state_dict['prob_step'] = self.prob_step
+        state_dict['update_counter'] = self.update_counter
+        state_dict['balance_prob'] = self.balance_prob
+        state_dict['eps'] = self.eps
+        state_dict['maximize'] = self.maximize
+        return state_dict
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """Load the optimizer state.
+        
+        Restores the optimizer's internal counters.
+        """
+        # Extract our custom counters before calling super()
+        self.prob_step = state_dict.pop('prob_step', 0)
+        self.update_counter = state_dict.pop('update_counter', 0)
+        self.balance_prob = state_dict.pop('balance_prob', 0.01)
+        self.eps = state_dict.pop('eps', torch.finfo(torch.bfloat16).tiny)
+        self.maximize = state_dict.pop('maximize', False)
+        
+        # Load the rest of the state
+        super().load_state_dict(state_dict)
 
     @torch.no_grad()
     def step(self, closure: CLOSURE = None) -> LOSS:
