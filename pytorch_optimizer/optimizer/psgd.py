@@ -342,7 +342,7 @@ def solve_triangular_right(x: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
 
 
 def get_a_and_conj_b(
-    expr_a: List[str], g: torch.Tensor, qs: List[torch.Tensor], v: torch.Tensor
+    expr_a: str, g: torch.Tensor, qs: List[torch.Tensor], v: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     r"""Get A and b.conj."""
     a = torch.einsum(expr_a, *qs, g)
@@ -371,10 +371,10 @@ def get_q_terms(expr_gs: List[str], a: torch.Tensor, conj_b: torch.Tensor) -> Li
 
 def update_precondition(
     qs: List[torch.Tensor],
-    expressions: List[Tuple[str, List[str], str]],
+    expressions: Tuple[str, List[str], str],
     v: torch.Tensor,
     g: torch.Tensor,
-    step: int,
+    step: float,
     eps: float,
 ) -> None:
     r"""Update Kronecker product pre-conditioner Q with pair (V, G)."""
@@ -399,6 +399,8 @@ def update_precondition(
         q.sub_(tmp)
 
 
-def get_precondition_grad(qs: list[torch.Tensor], expressions: list[str], g: torch.Tensor) -> torch.Tensor:
+def get_precondition_grad(qs: List[torch.Tensor], expressions: Tuple[str, List[str], str], g: torch.Tensor) -> torch.Tensor:
     r"""Precondition gradient G with pre-conditioner Q."""
-    return torch.einsum(expressions[-1], *[x.conj() for x in qs], *qs, g)
+    # Fix: expressions is a tuple (expr_a, expr_gs, expr_r), so we need expressions[2] for expr_r
+    expr_r = expressions[2]
+    return torch.einsum(expr_r, *[x.conj() for x in qs], *qs, g)
