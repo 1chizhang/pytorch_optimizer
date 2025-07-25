@@ -143,6 +143,19 @@ class Kron(BaseOptimizer):
         # Load the rest of the state
         super().load_state_dict(state_dict)
 
+        # Regenerate deterministic 'expressions' to overwrite corrupted ones from checkpoint.
+        for group in self.param_groups:
+            for p in group['params']:
+                if p in self.state:
+                    _, self.state[p]['expressions'] = initialize_q_expressions(
+                        t=p,
+                        scale=group['precondition_init_scale'],
+                        max_size=group['max_size_triangular'],
+                        min_ndim_triangular=group['min_ndim_triangular'],
+                        memory_save_mode=group['memory_save_mode'],
+                        dtype=group['precondition_dtype'],
+                    )
+
     @torch.no_grad()
     def step(self, closure: CLOSURE = None) -> LOSS:
         loss: LOSS = None
